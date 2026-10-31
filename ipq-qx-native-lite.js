@@ -9,7 +9,7 @@
  *  - event-interaction <脚本>             : 节点页启动检测，出摘要弹窗
  *  - http-request <脚本>/report?d=<密文>  : 全文报告页（自行解码渲染，不依赖外部页面）
  */
-const QX_BUILD = "2026-11-02.qx8-compact";
+const QX_BUILD = "2026-11-02.qx9-layout";
 const reqUrl = String(($request && $request.url) || "");
 const SRC_URL = "https://gcore.jsdelivr.net/gh/MaYIHEI/paperclip@main/loon/ipquality/ipquality.js";
 const HARD_BUDGET_MS = 45000;
@@ -102,43 +102,42 @@ function run(nodeName) {
 
 /* ---------------- 摘要弹窗 ---------------- */
 function buildSummary(result, nodeName, startedAt) {
-    const html = result && result.htmlMessage;
-    if (!html) return {title: "IP 质量检测", message: String(result && (result.message || result.content) || "检测失败"), icon: "network.slash"};
-    const text = htmlToText(html);
-    const sections = text.split(/▌/);
-    const out = [];
-    const clip = (s,n) => Array.from(s).slice(0,n).join("");
-    const compact = s => s.split("\n").map(x=>x.trim()).filter(Boolean);
-    // 不重复显示节点名、报告标题，不把长说明和失败源列表塞进弹窗。
-    const head = compact(sections.shift() || "").filter(x=>!/^节点/.test(x));
-    if (head.length) out.push(clip(head.join(" · "),64));
-    sections.forEach(section => {
-        const rows=compact(section), name=rows.shift() || "";
-        if (/流媒体|AI/.test(name)) return;
-        const good=rows.filter(x=>!/^未返回|^本次未返回|^已跳过|^补充来源|^类型名称|^聚合来源|^本次没有/.test(x));
-        if (!good.length) return;
-        if (/数据状态/.test(name)) {
-            const state=good.find(x=>/来源.*\d+\//.test(x));
-            if(state) out.push(clip(state.replace(/^状态\s*/,""),48));
-            return;
+    if (!result || !result.htmlMessage) return {title:"IP 质量 · 排版9",message:String(result && (result.content || result.message) || "检测失败"),icon:"network.slash"};
+    const sections=htmlToText(result.htmlMessage).split(/▌/);
+    const rows=s=>s.split("\n").map(x=>x.trim()).filter(Boolean);
+    const short=(s,n)=>Array.from(s).length>n?Array.from(s).slice(0,n-1).join("")+"…":s;
+    const head=rows(sections.shift() || "").filter(x=>!/^节点/.test(x));
+    // 头部逐字段展示；不再用 join(' · ') 把 IP、地区、ASN 挤在一行。
+    const out=head.slice(0,4).map(x=>short(x,30));
+    let status="";
+    sections.forEach(part=>{
+        const r=rows(part),name=r.shift() || "";
+        if(/流媒体|AI|基础信息/.test(name))return;
+        const useful=r.filter(x=>!/^未返回|^本次未返回|^已跳过|^补充来源|^类型名称|^聚合来源|^本次没有/.test(x));
+        if(/数据状态/.test(name)) {
+            status=useful.find(x=>/来源.*\d+\//.test(x)) || "";return;
         }
-        if (/基础信息/.test(name)) {
-            // 顶部已保留出口和归属；基础字段合并到一行。
-            const details=good.filter(x=>!/^来源/.test(x));
-            if(details.length) out.push(clip(details.join(" · "),72));
-            return;
+        if(!useful.length)return;
+        const group=[];
+        if(/风险因素/.test(name)) {
+            // 来源名和紧随其后的“命中”配成一行，保留判定，不重复列正常字段。
+            let source="";
+            useful.forEach(x=>{
+                if(/^未命中/.test(x))return;
+                if(/^命中\s/.test(x))group.push(short((source?source+"：":"")+x,30));
+                else source=x;
+            });
+        } else {
+            useful.forEach(x=>group.push(short(x.replace(/^●\s*/,"").replace(/（补充）/g,"").replace(/\s+([0-9]+(?:\.[0-9]+)?)\s*·/,"：$1 ·"),30)));
         }
-        out.push("【"+name+"】");
-        // 每个来源独立保留，长解释省略，不只取第一个风险分。
-        good.forEach(x=>out.push(clip(x.replace(/^●\s*/,""),52)));
+        if(group.length)out.push("","▌"+name,...group);
     });
-    const cost=((Date.now()-startedAt)/1000).toFixed(1);
-    // 优先保留前面的类型和各库分数；超过布局预算时明示省略。
-    const more=out.length>16;
-    const body=out.slice(0,16);
-    if(more) body.push("部分细项省略（弹窗空间限制）");
-    body.push("耗时 "+cost+"s");
-    return { title:"IP 质量 · "+clip(nodeName,12), message:body.join("\n"), icon:"shield.lefthalf.filled" };
+    // 空行也是排版的一部分；超长时按整行收尾，明确提示，不切碎字段。
+    const limited=out.length>22;
+    const body=out.slice(0,22);
+    if(limited)body.push("…部分细项省略");
+    body.push("",short(status.replace(/^状态\s*/,""),30)+ (status?" · ":"")+((Date.now()-startedAt)/1000).toFixed(1)+"s");
+    return {title:"IP 质量 · 排版9",message:body.join("\n"),icon:"shield.lefthalf.filled"};
 }
 
 /* ---------------- 全文报告页 ---------------- */
