@@ -1,35 +1,46 @@
 /**
- * 节点 IP 质量检测 · Quantumult X 原生版（对应 loon/ipquality 原版）
+ * 节点 IP 质量检测 · Quantumult X 原生版 v2
  *
- * 与 qx2 网页版不同：这里直接把原版 ipquality.js (r8) 的 htmlMessage 报告
- * 在 QX 的通知里以纯文本形式完整给出（QX 不支持 htmlMessage 富文本）。
+ * 关键改动：报告不再塞进 QX 弹窗（太长会顶到屏幕外、关不掉），改为「短摘要弹窗 + 全文页」。
+ *  - 弹窗只留：IP / 国家 / ASN / 风险分 / 媒体 3 条 / 状态行（≤ 12 行）
+ *  - 弹窗里的「查看完整报告」链接打开由本脚本渲染的 HTML 页（Safari）
  *
  * 事件：
- *  - event-interaction  : 节点/策略组页运行，跑完一次性返回报告文本
- *  - http-request .../api/all : 网页版共用（这里保留，便于可选网页壳）
+ *  - event-interaction <脚本>             : 节点页启动检测，出摘要弹窗
+ *  - http-request <脚本>/report?d=<密文>  : 全文报告页（自行解码渲染，不依赖外部页面）
  */
-const QX_BUILD = "2026-11-02.qx1-native";
+const QX_BUILD = "2026-11-02.qx2-native";
 const SRC_URL = "https://gcore.jsdelivr.net/gh/MaYIHEI/paperclip@main/loon/ipquality/ipquality.js";
 const HARD_BUDGET_MS = 50000;
+const SUMMARY_MAX_LINES = 12;
+const REPORT_KEY = "ipq.qx.report";
 
-// 从 QX 节点页拿节点名：$environment.params（QX 交互脚本会带）或 URL node=
 const reqUrl = String(($request && $request.url) || "");
 const nodeParam = queryValue(reqUrl, "node");
-let nodeName = "";
-try {
-    if (typeof $environment !== "undefined" && $environment) {
-        nodeName = String($environment.params || $environment.node || "");
-    }
-} catch (e) {}
-nodeName = (nodeName || nodeParam || "").trim();
+const dParam = queryValue(reqUrl, "d");
 
-if (!nodeName) {
-    $done({ title: "节点 IP 质量检测", message: "未获取到节点名。请在 QX 节点/策略组页长按该节点运行本脚本。", icon: "network.slash" });
+if (/\/report(\?|$)/.test(reqUrl)) {
+    serveReport();
 } else {
-    run();
+    startDetection();
 }
 
-function run() {
+function startDetection() {
+    let nodeName = "";
+    try {
+        if (typeof $environment !== "undefined" && $environment) {
+            nodeName = String($environment.params || $environment.node || "");
+        }
+    } catch (e) {}
+    nodeName = (nodeName || nodeParam || "").trim();
+    if (!nodeName) {
+        $done({ title: "节点 IP 质量检测", message: "未获取到节点名。请在 QX 节点/策略组页长按该节点运行本脚本。", icon: "network.slash" });
+        return;
+    }
+    run(nodeName);
+}
+
+function run(nodeName) {
     const startedAt = Date.now();
     let settled = false;
     const finish = (result) => {
@@ -39,7 +50,7 @@ function run() {
     };
     const timer = setTimeout(() => finish({
         title: "节点 IP 质量检测",
-        message: "检测超过 " + Math.round(HARD_BUDGET_MS / 1000) + " 秒未完成，请稍后重试（媒体检测耗时较长）。",
+        message: "超过 " + Math.round(HARD_BUDGET_MS / 1000) + " 秒未完成，稍后重试（可关媒体检测提速）。",
         icon: "clock.badge.exclamationmark",
     }), HARD_BUDGET_MS);
 
@@ -54,7 +65,7 @@ function run() {
                 r.body + "\n//# sourceURL=ipquality-r8-qx-native.js");
             execute((result) => {
                 clearTimeout(timer);
-                finish(toTextDone(result, startedAt));
+                finish(buildSummary(result, nodeName, startedAt));
             }, storeFacade(), { params: { node: nodeName } }, proxyHttpClient(), mapNotify(), prefsFacade(), $task, { log() {} });
         } catch (e) {
             clearTimeout(timer);
@@ -66,46 +77,93 @@ function run() {
     });
 }
 
-/* 把 htmlMessage 转成 QX 能显示的纯文本报告（保留分节与对齐） */
-function toTextDone(result, startedAt) {
-    result = result || {};
-    const title = pickTitle(result) || "节点 IP 质量检测";
-    const html = result.htmlMessage ? String(result.htmlMessage) : "";
-    let text = html ? htmlToText(html) : String(result.content || result.message || "");
-    const cost = ((Date.now() - startedAt) / 1000).toFixed(1);
-    text = text.replace(/Loon 不提供节点 TCP\/DNS API/g, "QX 不提供节点 TCP/DNS API");
-    text += "\n\n—— " + cost + " 秒 · " + QX_BUILD;
-    if (text.length > 3900) {
-        // QX 通知正文有长度上限，超长截断并提示
-        text = text.slice(0, 3900) + "\n…（过长已截断，可关闭媒体检测或改用网页版看全文）";
+/* ---------------- 摘要弹窗 ---------------- */
+function buildSummary(result, nodeName, startedAt) {
+    const cost = ((Date.now() - startedAt) / 1000).toFixed(1) + "s";
+    const html = result && result.htmlMessage ? String(result.htmlMessage) : "";
+    const text = html ? htmlToText(html) : String((result && (result.content || result.message)) || "无报告");
+    if (!html) {
+        return { title: "节点 IP 质量检测", message: truncateLines(text, SUMMARY_MAX_LINES), icon: "exclamationmark.triangle" };
     }
-    return { title: title, message: text, icon: result.icon || "shield.lefthalf.filled" };
+
+    const lines = [];
+    const push = (s) => { if (s && String(s).trim()) lines.push(String(s).trim()); };
+
+    // 头部：IP / 归属 / ASN
+    const ipMatch = text.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/);
+    const asnMatch = text.match(/AS\d+\s*·\s*[^\n]+/);
+    const countryLine = (text.split("\n").find((l) => /\[[A-Z]{2}\]/.test(l)) || "").trim();
+    push("节点 · " + nodeName);
+    if (ipMatch) push(ipMatch[0]);
+    if (countryLine) push(countryLine);
+    if (asnMatch) push(asnMatch[0]);
+
+    // 风险评分（第一条带分数）
+    const riskLine = (text.split("\n").find((l) => /●.*\d+\s*·/.test(l)) || "").trim();
+    if (riskLine) push("风险 " + riskLine.replace(/^●\s*/, "").replace(/\s+/g, " "));
+
+    // 媒体：只取判定过的
+    const media = [];
+    text.split("\n").forEach((l) => {
+        const m = l.match(/^([✅⚪⛔])\s*([^\s]+)\s*(解锁|未确认|不可用|部分可用)/);
+        if (m && m[1] !== "⚪") media.push(m[2] + m[3]);
+    });
+    if (media.length) push("媒体 " + media.slice(0, 3).join(" · "));
+
+    push("耗时 " + cost);
+
+    // 写全文快照，供 report 页读取（$prefs 全局共享）
+    const snapshot = { node: nodeName, html: html, at: Date.now(), build: QX_BUILD };
+    const key = reportKey(nodeName);
+    try { $prefs.setValueForKey(JSON.stringify(snapshot), key); } catch (e) {}
+    const openUrl = baseScriptUrl() + "/report?node=" + encodeURIComponent(nodeName) + "&d=" + encodeURIComponent(shortKey(nodeName));
+
+    const message = lines.join("\n")
+        + "\n\n完整报告（地理/风险因素/媒体全项）：\n" + openUrl;
+
+    return {
+        title: "节点 IP 质量检测 · " + truncateText(nodeName, 16),
+        message: message,
+        icon: (result && result.icon) || "shield.lefthalf.filled",
+    };
 }
 
-function pickTitle(result) {
-    if (result.title && result.title.replace(/\u200B/g, "").trim()) return result.title;
-    return "节点 IP 质量检测";
+/* ---------------- 全文报告页 ---------------- */
+function serveReport() {
+    let key = dParam ? "ipq.qx.report." + dParam : reportKey(nodeParam);
+    let raw = null;
+    try { raw = $prefs.valueForKey(key); } catch (e) {}
+    let snap = null;
+    try { snap = raw ? JSON.parse(raw) : null; } catch (e) {}
+    if (!snap && raw) snap = { node: nodeParam || "", html: String(raw), at: Date.now() };
+    const html = snap && snap.html
+        ? renderPage(snap.html, snap.node, snap.at)
+        : "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><body style='font:15px -apple-system;padding:24px'>还没有报告缓存，请回 QX 节点页重新运行「节点 IP 质量检测」。</body>";
+    $done({
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+        body: html,
+    });
 }
 
-function htmlToText(html) {
-    let s = String(html);
-    s = s.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<script[\s\S]*?<\/script>/gi, "");
-    s = s.replace(/<br\s*\/?>/gi, "\n");
-    s = s.replace(/<\/(div|p|tr|li|h[1-6]|section|details|summary)>/gi, "\n");
-    s = s.replace(/<\/t[dh]>/gi, "  ");
-    s = s.replace(/<hr[^>]*>/gi, "\n──────────\n");
-    s = s.replace(/<[^>]+>/g, "");
-    s = s.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-    s = s.replace(/[ \t]+/g, " ");
-    s = s.replace(/\n[ \t]+/g, "\n");
-    s = s.replace(/\n{3,}/g, "\n\n");
-    // 去掉原版用来撑高度的空行
-    s = s.split("\n").filter((line) => line.trim() !== "" || true).join("\n");
-    return s.trim();
+function renderPage(reportHtml, node, at) {
+    const when = at ? new Date(at).toLocaleString("zh-CN") : "";
+    return "<!doctype html><html lang=zh-CN><head><meta charset=utf-8>"
+        + "<meta name=viewport content='width=device-width,initial-scale=1,viewport-fit=cover'>"
+        + "<meta name=color-scheme content='light dark'><title>节点 IP 质量检测</title>"
+        + "<style>:root{color-scheme:light dark}body{margin:0;padding:max(18px,env(safe-area-inset-top)) 14px max(40px,env(safe-area-inset-bottom));"
+        + "font:14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;background:#f2f2f7;color:#1c1c1e}"
+        + ".card{max-width:760px;margin:0 auto;background:#fff;border-radius:18px;padding:16px 16px 20px;box-shadow:0 4px 20px rgba(0,0,0,.05)}"
+        + ".meta{color:#8e8e93;font-size:11px;margin-bottom:10px}"
+        + "a{color:#0a84ff}"
+        + "@media(prefers-color-scheme:dark){body{background:#000;color:#f2f2f7}.card{background:#1c1c1e;box-shadow:none}.meta{color:#a1a1a6}}</style>"
+        + "</head><body><div class=card>"
+        + "<div class=meta>" + escapeHtml(node || "") + (when ? " · " + escapeHtml(when) : "") + " · " + QX_BUILD + "</div>"
+        + reportHtml.replace(/Loon 不提供节点 TCP\/DNS API/g, "QX 不提供节点 TCP/DNS API")
+        + "</div></body></html>";
 }
 
-/* 注入给原版脚本的兼容层 */
+/* ---------------- 注入给原版脚本的兼容层 ---------------- */
 function storeFacade() {
     return {
         read(key) { try { return $prefs.valueForKey(key); } catch (e) { return null; } },
@@ -142,15 +200,65 @@ function proxyHttpClient() {
     return { get: mk("GET"), post: mk("POST") };
 }
 
-// MapNotification 复用：原版会自己 $notify，这里透传给 QX
 function mapNotify() {
     return function (title, subtitle, body, options) {
         if (typeof $notify === "function") $notify(title, subtitle, body, options || {});
     };
 }
 
+/* ---------------- 工具 ---------------- */
+function htmlToText(html) {
+    let s = String(html);
+    s = s.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<script[\s\S]*?<\/script>/gi, "");
+    s = s.replace(/<br\s*\/?>/gi, "\n");
+    s = s.replace(/<\/(div|p|tr|li|h[1-6]|section|details|summary)>/gi, "\n");
+    s = s.replace(/<\/t[dh]>/gi, "  ");
+    s = s.replace(/<[^>]+>/g, "");
+    s = s.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    s = s.replace(/[ \t]+/g, " ");
+    s = s.replace(/\n[ \t]+/g, "\n");
+    s = s.replace(/\n{3,}/g, "\n\n");
+    return s.trim();
+}
+
+function truncateLines(text, maxLines) {
+    const lines = String(text).split("\n").filter((l) => l.trim() !== "");
+    if (lines.length <= maxLines) return lines.join("\n");
+    return lines.slice(0, maxLines).join("\n") + "\n…（已省略，见完整报告）";
+}
+
+function reportKey(node) {
+    return "ipq.qx.report." + shortKey(node);
+}
+
+function shortKey(node) {
+    const s = String(node || "");
+    let h = 0;
+    for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) % 1000000007;
+    return h.toString(36);
+}
+
+// QX 交互脚本拿不到自身 URL 时，用配置里的公开地址兜底
+function baseScriptUrl() {
+    const fromReq = reqUrl.replace(/\/report(\?.*)?$/, "");
+    if (/^https?:\/\//.test(fromReq) && !/^https?:\/\/[^/]*\/?$/.test(fromReq)) return fromReq;
+    return "https://cdn.jsdelivr.net/gh/fengao82218/ipquality-qx@main/ipq-qx-native.js";
+}
+
 function queryValue(link, key) {
     const m = String(link || "").match(new RegExp("[?&]" + key + "=([^&#]*)"));
     if (!m) return "";
     try { return decodeURIComponent(m[1].replace(/\+/g, " ")); } catch (e) { return m[1]; }
+}
+
+function truncateText(v, n) {
+    const t = String(v || "");
+    return t.length > n ? t.slice(0, n - 1) + "…" : t;
+}
+
+function escapeHtml(v) {
+    return String(v === null || typeof v === "undefined" ? "" : v)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
