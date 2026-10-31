@@ -9,7 +9,7 @@
  *  - event-interaction <脚本>             : 节点页启动检测，出摘要弹窗
  *  - http-request <脚本>/report?d=<密文>  : 全文报告页（自行解码渲染，不依赖外部页面）
  */
-const QX_BUILD = "2026-11-02.qx7-native";
+const QX_BUILD = "2026-11-02.qx8-compact";
 const reqUrl = String(($request && $request.url) || "");
 const SRC_URL = "https://gcore.jsdelivr.net/gh/MaYIHEI/paperclip@main/loon/ipquality/ipquality.js";
 const HARD_BUDGET_MS = 45000;
@@ -102,47 +102,43 @@ function run(nodeName) {
 
 /* ---------------- 摘要弹窗 ---------------- */
 function buildSummary(result, nodeName, startedAt) {
-    const cost = ((Date.now() - startedAt) / 1000).toFixed(1) + "s";
-    const html = result && result.htmlMessage ? String(result.htmlMessage) : "";
-    const text = html ? htmlToText(html) : String((result && (result.content || result.message)) || "无报告");
-    if (!html) {
-        return { title: "节点 IP 质量检测", message: truncateLines(text, SUMMARY_MAX_LINES), icon: "exclamationmark.triangle" };
-    }
-
-    const lines = [];
-    const push = (s) => { if (s && String(s).trim()) lines.push(String(s).trim()); };
-
-    // 头部：IP / 归属 / ASN
-    const ipMatch = text.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/);
-    const asnMatch = text.match(/AS\d+\s*·\s*[^\n]+/);
-    let countryLine = (text.split("\n").find((l) => /\[[A-Z]{2}\]/.test(l)) || "").trim();
-    if (!countryLine) countryLine = (text.split("\n").find((l) => /^(Hong Kong|Taiwan|Japan|United States|Singapore|Korea)/.test(l)) || "").trim();
-    push("节点 · " + nodeName);
-    if (ipMatch) push(ipMatch[0]);
-    if (countryLine) push(countryLine);
-    if (asnMatch) push(asnMatch[0]);
-
-    // 风险评分（第一条带分数）
-    const riskLine = (text.split("\n").find((l) => /●.*\d+\s*·/.test(l)) || "").trim();
-    if (riskLine) push("风险 " + riskLine.replace(/^●\s*/, "").replace(/\s+/g, " "));
-
-    // 媒体：只取判定过的
-    const media = [];
-    text.split("\n").forEach((l) => {
-        const m = l.match(/^([✅⚪⛔])\s*([^\s]+)\s*(解锁|未确认|不可用|部分可用)/);
-        if (m && m[1] !== "⚪") media.push(m[2] + m[3]);
+    const html = result && result.htmlMessage;
+    if (!html) return {title: "IP 质量检测", message: String(result && (result.message || result.content) || "检测失败"), icon: "network.slash"};
+    const text = htmlToText(html);
+    const sections = text.split(/▌/);
+    const out = [];
+    const clip = (s,n) => Array.from(s).slice(0,n).join("");
+    const compact = s => s.split("\n").map(x=>x.trim()).filter(Boolean);
+    // 不重复显示节点名、报告标题，不把长说明和失败源列表塞进弹窗。
+    const head = compact(sections.shift() || "").filter(x=>!/^节点/.test(x));
+    if (head.length) out.push(clip(head.join(" · "),64));
+    sections.forEach(section => {
+        const rows=compact(section), name=rows.shift() || "";
+        if (/流媒体|AI/.test(name)) return;
+        const good=rows.filter(x=>!/^未返回|^本次未返回|^已跳过|^补充来源|^类型名称|^聚合来源|^本次没有/.test(x));
+        if (!good.length) return;
+        if (/数据状态/.test(name)) {
+            const state=good.find(x=>/来源.*\d+\//.test(x));
+            if(state) out.push(clip(state.replace(/^状态\s*/,""),48));
+            return;
+        }
+        if (/基础信息/.test(name)) {
+            // 顶部已保留出口和归属；基础字段合并到一行。
+            const details=good.filter(x=>!/^来源/.test(x));
+            if(details.length) out.push(clip(details.join(" · "),72));
+            return;
+        }
+        out.push("【"+name+"】");
+        // 每个来源独立保留，长解释省略，不只取第一个风险分。
+        good.forEach(x=>out.push(clip(x.replace(/^●\s*/,""),52)));
     });
-    if (media.length) push("媒体 " + media.slice(0, 3).join(" · "));
-
-    push("耗时 " + cost);
-
-    const message = lines.join("\n");
-
-    return {
-        title: "节点 IP 质量检测 · " + truncateText(nodeName, 16),
-        message: message,
-        icon: (result && result.icon) || "shield.lefthalf.filled",
-    };
+    const cost=((Date.now()-startedAt)/1000).toFixed(1);
+    // 优先保留前面的类型和各库分数；超过布局预算时明示省略。
+    const more=out.length>16;
+    const body=out.slice(0,16);
+    if(more) body.push("部分细项省略（弹窗空间限制）");
+    body.push("耗时 "+cost+"s");
+    return { title:"IP 质量 · "+clip(nodeName,12), message:body.join("\n"), icon:"shield.lefthalf.filled" };
 }
 
 /* ---------------- 全文报告页 ---------------- */
