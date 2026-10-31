@@ -9,7 +9,7 @@
  *  - event-interaction <脚本>             : 节点页启动检测，出摘要弹窗
  *  - http-request <脚本>/report?d=<密文>  : 全文报告页（自行解码渲染，不依赖外部页面）
  */
-const QX_BUILD = "2026-11-02.qx9-layout";
+const QX_BUILD = "2026-11-02.qx10-sources";
 const reqUrl = String(($request && $request.url) || "");
 const SRC_URL = "https://gcore.jsdelivr.net/gh/MaYIHEI/paperclip@main/loon/ipquality/ipquality.js";
 const HARD_BUDGET_MS = 45000;
@@ -26,7 +26,7 @@ const HARD_BUDGET_MS = 45000;
  * 想自定义：在 QX 里把脚本地址改成
  *   <脚本>?media=on&block=scamalytics,abuseipdb
  * =============================================================== */
-const ALLOW = "my.ippure.com,api.ipapi.is,ip-api.com/json/,api4.ipify.org,v4.ident.me,ipinfo.io/widget,ipwho.is,ipinfo.check.place/";
+const ALLOW = ""; // 恢复原版所有 IP 数据源；MediaTest 独立保持关闭。
 const BLOCK = "-";          // "-" = 不额外屏蔽（ALLOW 已限定）
 const MEDIA = "off";        // on/off：流媒体与 AI 检测（最耗请求的部分）
 const MASK = "off";         // on/off：报告里打码 IP
@@ -102,7 +102,7 @@ function run(nodeName) {
 
 /* ---------------- 摘要弹窗 ---------------- */
 function buildSummary(result, nodeName, startedAt) {
-    if (!result || !result.htmlMessage) return {title:"IP 质量 · 排版9",message:String(result && (result.content || result.message) || "检测失败"),icon:"network.slash"};
+    if (!result || !result.htmlMessage) return {title:"IP 质量 · 排版10",message:String(result && (result.content || result.message) || "检测失败"),icon:"network.slash"};
     const sections=htmlToText(result.htmlMessage).split(/▌/);
     const rows=s=>s.split("\n").map(x=>x.trim()).filter(Boolean);
     const short=(s,n)=>Array.from(s).length>n?Array.from(s).slice(0,n-1).join("")+"…":s;
@@ -110,12 +110,14 @@ function buildSummary(result, nodeName, startedAt) {
     // 头部逐字段展示；不再用 join(' · ') 把 IP、地区、ASN 挤在一行。
     const out=head.slice(0,4).map(x=>short(x,30));
     let status="";
+    const missing=[];
     sections.forEach(part=>{
         const r=rows(part),name=r.shift() || "";
         if(/流媒体|AI|基础信息/.test(name))return;
         const useful=r.filter(x=>!/^未返回|^本次未返回|^已跳过|^补充来源|^类型名称|^聚合来源|^本次没有/.test(x));
         if(/数据状态/.test(name)) {
-            status=useful.find(x=>/来源.*\d+\//.test(x)) || "";return;
+            status=useful.find(x=>/来源.*\d+\//.test(x)) || "";
+            r.filter(x=>/^未返回/.test(x)).forEach(x=>missing.push(...x.replace(/^未返回\s*[·：:]?\s*/, "").split("、")));return;
         }
         if(!useful.length)return;
         const group=[];
@@ -133,11 +135,15 @@ function buildSummary(result, nodeName, startedAt) {
         if(group.length)out.push("","▌"+name,...group);
     });
     // 空行也是排版的一部分；超长时按整行收尾，明确提示，不切碎字段。
-    const limited=out.length>22;
-    const body=out.slice(0,22);
+    const limited=out.length>30;
+    const body=out.slice(0,30);
     if(limited)body.push("…部分细项省略");
+    if(missing.length){
+        body.push("", "▌未返回来源");
+        for(let i=0;i<missing.length;i+=3) body.push(missing.slice(i,i+3).join("、"));
+    }
     body.push("",short(status.replace(/^状态\s*/,""),30)+ (status?" · ":"")+((Date.now()-startedAt)/1000).toFixed(1)+"s");
-    return {title:"IP 质量 · 排版9",message:body.join("\n"),icon:"shield.lefthalf.filled"};
+    return {title:"IP 质量 · 排版10",message:body.join("\n"),icon:"shield.lefthalf.filled"};
 }
 
 /* ---------------- 全文报告页 ---------------- */
