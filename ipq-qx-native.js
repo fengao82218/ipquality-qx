@@ -9,13 +9,36 @@
  *  - event-interaction <脚本>             : 节点页启动检测，出摘要弹窗
  *  - http-request <脚本>/report?d=<密文>  : 全文报告页（自行解码渲染，不依赖外部页面）
  */
-const QX_BUILD = "2026-11-02.qx3-native";
+const QX_BUILD = "2026-11-02.qx4-native";
+const reqUrl = String(($request && $request.url) || "");
 const SRC_URL = "https://gcore.jsdelivr.net/gh/MaYIHEI/paperclip@main/loon/ipquality/ipquality.js";
-const HARD_BUDGET_MS = 50000;
+const HARD_BUDGET_MS = 45000;
+
+/* ============ 请求精简配置（改这里，或由 QX 参数覆盖） ============
+ * 默认 MEDIA=off、MASK=off，只保留能出结论的源：
+ *   - 出口 IP / 基础归属：ippure + ipapi.is + ip-api.com + ipify/ipinfo trace
+ *   - 风险：ippure 分数 + ipapi.is 机房/VPN 标记
+ *   - 被精简掉的：maxmind(2次) / ipinfo widget / ipwho.is / scamalytics / abuseipdb
+ *                 / ip2location(2次) / ipdata / ipqs / proxycheck / dbip / ipregistry
+ *                 / 全部媒体与 AI 站点（每个站点 2~4 次请求）
+ *
+ * 想加回某个源：让它出现在 ALLOW 里，或用 BLOCK="-" 全开。
+ * 想自定义：在 QX 里把脚本地址改成
+ *   <脚本>?media=on&block=scamalytics,abuseipdb
+ * =============================================================== */
+const ALLOW = "my.ippure.com,api.ipapi.is,ip-api.com/json/,api4.ipify.org,v4.ident.me,myip.check.place";
+const BLOCK = "-";          // "-" = 不额外屏蔽（ALLOW 已限定）
+const MEDIA = "off";        // on/off：流媒体与 AI 检测（最耗请求的部分）
+const MASK = "off";         // on/off：报告里打码 IP
+
+// 兼容 QX 参数覆盖：脚本 URL 上的 query
+const cfgMedia = (queryValue(reqUrl, "media") || MEDIA).toLowerCase();
+const cfgMask = (queryValue(reqUrl, "mask") || MASK).toLowerCase();
+const SOURCE_ONLY = queryValue(reqUrl, "only") || ALLOW;
+const SOURCE_BLOCK = queryValue(reqUrl, "block") || BLOCK;
 const SUMMARY_MAX_LINES = 12;
 const REPORT_KEY = "ipq.qx.report";
 
-const reqUrl = String(($request && $request.url) || "");
 const nodeParam = queryValue(reqUrl, "node");
 const dParam = queryValue(reqUrl, "d");
 
@@ -92,7 +115,8 @@ function buildSummary(result, nodeName, startedAt) {
     // 头部：IP / 归属 / ASN
     const ipMatch = text.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/);
     const asnMatch = text.match(/AS\d+\s*·\s*[^\n]+/);
-    const countryLine = (text.split("\n").find((l) => /\[[A-Z]{2}\]/.test(l)) || "").trim();
+    let countryLine = (text.split("\n").find((l) => /\[[A-Z]{2}\]/.test(l)) || "").trim();
+    if (!countryLine) countryLine = (text.split("\n").find((l) => /^(Hong Kong|Taiwan|Japan|United States|Singapore|Korea)/.test(l)) || "").trim();
     push("节点 · " + nodeName);
     if (ipMatch) push(ipMatch[0]);
     if (countryLine) push(countryLine);
@@ -166,7 +190,17 @@ function renderPage(reportHtml, node, at) {
 /* ---------------- 注入给原版脚本的兼容层 ---------------- */
 function storeFacade() {
     return {
-        read(key) { try { return $prefs.valueForKey(key); } catch (e) { return null; } },
+        read(key) {
+            // 原版用 $persistentStore 读 MaskIP / MediaTest / MapNotification
+            const k = String(key || "");
+            if (k === "MediaTest") return cfgMedia === "on" ? "true" : "false";
+            if (k === "MaskIP") {
+                const v = cfgMask === "on" ? "true" : "false";
+                try { $prefs.setValueForKey(v, k); } catch (e) {}
+                return v;
+            }
+            try { return $prefs.valueForKey(k); } catch (e) { return null; }
+        },
         write(value, key) { try { $prefs.setValueForKey(String(value), key); return true; } catch (e) { return false; } },
         remove(key) { try { $prefs.removeValueForKey(key); return true; } catch (e) { return false; } },
     };
@@ -184,6 +218,11 @@ function proxyHttpClient() {
     function mk(method) {
         return function (opts, cb) {
             if (typeof opts === "string") opts = { url: opts };
+            // —— 请求数精简：命中被禁用源就直接回错误，原版会走它的降级分支 ——
+            if (!sourceAllowed(String(opts.url || ""))) {
+                setTimeout(() => cb("SKIP: 该数据源已被精简配置禁用", null, null), 0);
+                return;
+            }
             const o = {};
             for (const k in opts) o[k] = opts[k];
             o.method = method;
@@ -198,6 +237,18 @@ function proxyHttpClient() {
         };
     }
     return { get: mk("GET"), post: mk("POST") };
+}
+
+/* 数据源白/黑名单：url 里的域名或路径关键字 */
+function sourceAllowed(url) {
+    const block = String(SOURCE_BLOCK || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const allow = String(SOURCE_ONLY || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const u = url.toLowerCase();
+    const host = (u.match(/^https?:\/\/([^\/]+)/) || [])[1] || "";
+    const hit = (list) => list.some((k) => u.indexOf(k) >= 0);
+    if (allow.length) return hit(allow);
+    if (block.length && hit(block)) return false;
+    return true;
 }
 
 function mapNotify() {
