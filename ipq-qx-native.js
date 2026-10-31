@@ -9,7 +9,7 @@
  *  - event-interaction <脚本>             : 节点页启动检测，出摘要弹窗
  *  - http-request <脚本>/report?d=<密文>  : 全文报告页（自行解码渲染，不依赖外部页面）
  */
-const QX_BUILD = "2026-11-02.qx4-native";
+const QX_BUILD = "2026-11-02.qx5-native";
 const reqUrl = String(($request && $request.url) || "");
 const SRC_URL = "https://gcore.jsdelivr.net/gh/MaYIHEI/paperclip@main/loon/ipquality/ipquality.js";
 const HARD_BUDGET_MS = 45000;
@@ -26,7 +26,7 @@ const HARD_BUDGET_MS = 45000;
  * 想自定义：在 QX 里把脚本地址改成
  *   <脚本>?media=on&block=scamalytics,abuseipdb
  * =============================================================== */
-const ALLOW = "my.ippure.com,api.ipapi.is,ip-api.com/json/,api4.ipify.org,v4.ident.me,myip.check.place";
+const ALLOW = "my.ippure.com,api.ipapi.is,ip-api.com/json/,api4.ipify.org,v4.ident.me,ipinfo.io/widget,ipwho.is,ipinfo.check.place/";
 const BLOCK = "-";          // "-" = 不额外屏蔽（ALLOW 已限定）
 const MEDIA = "off";        // on/off：流媒体与 AI 检测（最耗请求的部分）
 const MASK = "off";         // on/off：报告里打码 IP
