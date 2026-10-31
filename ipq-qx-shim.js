@@ -12,7 +12,7 @@
  */
 const QX_BUILD = "2026-11-02.qx2";
 const SRC_URL = "https://gcore.jsdelivr.net/gh/MaYIHEI/paperclip@main/loon/ipquality/ipquality.js";
-const VIEWER_URL = "https://files.catbox.moe/8n346o.html";
+const VIEWER_URL = "https://cdn.jsdelivr.net/gh/fengao82218/ipquality-qx@main/viewer.html";
 const SESSION_KEY = "paperclip.ipquality.web.session";
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SOFT_BUDGET_MS = 45000;
