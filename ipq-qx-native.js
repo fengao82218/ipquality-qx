@@ -3,13 +3,13 @@
  *
  * 关键改动：报告不再塞进 QX 弹窗（太长会顶到屏幕外、关不掉），改为「短摘要弹窗 + 全文页」。
  *  - 弹窗只留：IP / 国家 / ASN / 风险分 / 媒体 3 条 / 状态行（≤ 12 行）
- *  - 弹窗里的「查看完整报告」链接打开由本脚本渲染的 HTML 页（Safari）
+ *  - 弹窗只出摘要，没有任何链接、不写快照、不需要 rewrite/mitm
  *
  * 事件：
  *  - event-interaction <脚本>             : 节点页启动检测，出摘要弹窗
  *  - http-request <脚本>/report?d=<密文>  : 全文报告页（自行解码渲染，不依赖外部页面）
  */
-const QX_BUILD = "2026-11-02.qx5-native";
+const QX_BUILD = "2026-11-02.qx6-native";
 const reqUrl = String(($request && $request.url) || "");
 const SRC_URL = "https://gcore.jsdelivr.net/gh/MaYIHEI/paperclip@main/loon/ipquality/ipquality.js";
 const HARD_BUDGET_MS = 45000;
@@ -136,14 +136,7 @@ function buildSummary(result, nodeName, startedAt) {
 
     push("耗时 " + cost);
 
-    // 写全文快照，供 report 页读取（$prefs 全局共享）
-    const snapshot = { node: nodeName, html: html, at: Date.now(), build: QX_BUILD };
-    const key = reportKey(nodeName);
-    try { $prefs.setValueForKey(JSON.stringify(snapshot), key); } catch (e) {}
-    const openUrl = reportBase() + "/report?node=" + encodeURIComponent(nodeName) + "&d=" + encodeURIComponent(shortKey(nodeName));
-
-    const message = lines.join("\n")
-        + "\n\n完整报告（地理/风险因素/媒体全项）：\n" + openUrl;
+    const message = lines.join("\n");
 
     return {
         title: "节点 IP 质量检测 · " + truncateText(nodeName, 16),
@@ -276,7 +269,7 @@ function htmlToText(html) {
 function truncateLines(text, maxLines) {
     const lines = String(text).split("\n").filter((l) => l.trim() !== "");
     if (lines.length <= maxLines) return lines.join("\n");
-    return lines.slice(0, maxLines).join("\n") + "\n…（已省略，见完整报告）";
+    return lines.slice(0, maxLines).join("\n") + "\n…（已省略）";
 }
 
 function reportKey(node) {
