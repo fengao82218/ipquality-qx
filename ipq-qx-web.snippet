@@ -1,0 +1,10 @@
+# 节点 IP 质量检测 · QX 全功能版（MaYIHEI/paperclip ipquality-web-test 移植）
+# 组成：节点页交互按钮（启动会话）+ 一个 hook 域名（报告页 & 检测接口）
+[task_local]
+event-interaction https://files.catbox.moe/95k5ee.js, tag=节点 IP 自检, img-url=shield.lefthalf.filled.system, timeout=10, enabled=true
+
+[rewrite_local]
+^https://files\.catbox\.moe/95k5ee\.js(\?.*)?$ url script-request-header https://files.catbox.moe/95k5ee.js
+
+[mitm]
+hostname = files.catbox.moe
