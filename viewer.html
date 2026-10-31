@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>节点 IP 质量检测</title>
+<style>
+:root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;background:#f2f2f7;color:#1c1c1e}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:max(18px,env(safe-area-inset-top)) 14px max(34px,env(safe-area-inset-bottom));-webkit-font-smoothing:antialiased}
+button,input{font:inherit}
+.shell{width:min(100%,720px);margin:auto}
+.top{display:flex;justify-content:space-between;gap:12px;margin:4px 2px 18px}
+h1{margin:0;font-size:22px}
+.muted{color:#6e6e73;font-size:12px;line-height:1.5}
+.badge{padding:5px 9px;border-radius:99px;background:#e4f1ff;color:#0874dc;font-size:11px;height:max-content}
+.panel{overflow:hidden;margin-bottom:14px;border-radius:20px;background:#fff;box-shadow:0 4px 20px rgba(0,0,0,.045)}
+.session{padding:15px 16px}
+.session b{display:block;margin-top:4px;overflow-wrap:anywhere}
+.head{display:flex;align-items:center;justify-content:space-between;margin:20px 3px 9px}
+.head h2{margin:0;font-size:16px}
+.opt{display:flex;align-items:center;justify-content:space-between;min-height:54px;padding:10px 15px;border-bottom:1px solid #ececf0;font-size:14px;font-weight:600}
+.opt:last-child{border:0}
+.opt-note{display:block;margin-top:2px;color:#8e8e93;font-size:10px;font-weight:400}
+.sw{position:relative;width:48px;height:29px;flex:0 0 auto}
+.sw input{position:absolute;opacity:0;width:100%;height:100%;margin:0}
+.track{position:absolute;inset:0;border-radius:99px;background:#d1d1d6;pointer-events:none}
+.track:after{content:"";position:absolute;top:2px;left:2px;width:25px;height:25px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.24);transition:.18s}
+.sw input:checked+.track{background:#30d158}
+.sw input:checked+.track:after{transform:translateX(19px)}
+.actions{display:grid;grid-template-columns:1fr auto;gap:10px}
+.actions button{min-height:46px;border:0;border-radius:15px;padding:0 17px;font-weight:600}
+.run{background:#0a84ff;color:#fff}
+.clear{background:#e5e5ea;color:#1c1c1e}
+button:disabled{opacity:.55}
+.progress{margin:9px 3px 16px}
+.result{margin:0;border-bottom:1px solid #ececf0}
+.result:last-child{border:0}
+.result summary{display:flex;align-items:center;justify-content:space-between;min-height:58px;padding:13px 15px;list-style:none}
+.result summary::-webkit-details-marker{display:none}
+.name{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600}
+.dot{width:9px;height:9px;border-radius:50%;background:#c7c7cc}
+.result[data-state=running] .dot{background:#ff9f0a}
+.result[data-state=success] .dot{background:#30d158}
+.result[data-state=error] .dot{background:#ff453a}
+.status{color:#8e8e93;font-size:11px}
+.result[data-state=success] .status{color:#16824f}
+.result[data-state=error] .status{color:#d72f26}
+.content{padding:0 14px 14px;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.empty{padding:20px 16px;text-align:center;font-size:13px}
+.error{padding:10px 1px 14px;color:#d72f26;font-size:13px}
+@media(prefers-color-scheme:dark){
+ :root,body{background:#000;color:#f2f2f7}
+ .panel{background:#1c1c1e;box-shadow:none}
+ .muted{color:#a1a1a6}
+ .badge{background:#102b45;color:#64b5ff}
+ .opt,.result,.content{border-color:#2c2c2e}
+ .track{background:#48484a}
+ .clear{background:#2c2c2e;color:#f2f2f7}
+ .result[data-state=success] .status{color:#32d583}
+ .result[data-state=error] .status{color:#ff6961}
+}
+@media(max-width:430px){.actions{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="shell">
+<header class="top">
+  <div><h1>节点 IP 质量检测</h1><div class="muted">QP· 勾选项目一次跑完</div></div>
+  <span class="badge">QX</span>
+</header>
+<section class="panel session"><span class="muted">目标节点</span><b id="session">读取中…</b></section>
+<div class="head"><h2>报告设置</h2><span class="muted">仅保存在本机</span></div>
+<section class="panel">
+  <label class="opt"><span>隐藏 IP <small class="opt-note">适合截图分享</small></span><span class="sw"><input type="checkbox" id="mask"><span class="track"></span></span></label>
+</section>
+<div class="head"><h2>选择检测项目</h2><span class="muted" id="count"></span></div>
+<section class="panel" id="options"></section>
+<div class="actions">
+  <button class="run" id="run">开始检测</button>
+  <button class="clear" id="clear">清空</button>
+</div>
+<div class="muted progress" id="progress">会话 30 分钟内有效</div>
+<div class="head"><h2>报告</h2><span class="muted" id="elapsed"></span></div>
+<section class="panel" id="results"><div class="empty muted">选择项目后开始检测</div></section>
+</main>
+<script>
+(function(){
+  var API="https://files.catbox.moe/95k5ee.js/api/all";
+  var M=[["basic","基础信息",1],["types","IP 类型属性",1],["scores","风险评分",1],["factors","风险因素",0],
+         ["egress","出口分流",0],["bgp","BGP 信息",0],["bgppath","BGP 路径",0],
+         ["inbound","外部探针入站路径",0],["ping","三网探针延迟",0],["mtr","外部探针 MTR",0],
+         ["stability","HTTPS 稳定性",0],["media","流媒体与 AI",1],["regions","地区一致性",0],["status","数据状态",0]];
+  var q=new URLSearchParams(location.search), rid=q.get("run")||"", node=q.get("node")||"";
+  var o=document.getElementById("options"), r=document.getElementById("results"), c=document.getElementById("count"),
+      p=document.getElementById("progress"), b=document.getElementById("run"), x=document.getElementById("clear"),
+      k=document.getElementById("mask"), busy=false;
+  try{var s=JSON.parse(localStorage.getItem("ipq-qx.mods")||"null");if(Array.isArray(s))M.forEach(function(m){m[2]=s.indexOf(m[0])>=0?1:0});}catch(e){}
+  try{k.checked=localStorage.getItem("ipq-qx.mask")==="1";}catch(e){}
+  k.onchange=function(){try{localStorage.setItem("ipq-qx.mask",k.checked?"1":"0");}catch(e){}};
+  document.getElementById("session").textContent=node?(node+"（"+rid+"）"):"缺少节点信息，请回 QX 节点页重新运行";
+  b.disabled=!rid;
+  M.forEach(function(m){
+    var l=document.createElement("label"); l.className="opt";
+    l.innerHTML='<span>'+esc(m[1])+'</span><span class="sw"><input type="checkbox" data-id="'+m[0]+'"'+(m[2]?" checked":"")+'><span class="track"></span></span>';
+    l.querySelector("input").onchange=function(e){m[2]=e.target.checked?1:0;save();count();};
+    o.appendChild(l);
+  });
+  count();
+  b.onclick=run;
+  x.onclick=function(){if(!busy){r.innerHTML='<div class="empty muted">选择项目后开始检测</div>';p.textContent="已清空";}};
+  function count(){c.textContent=M.filter(function(m){return m[2]}).length+" 项已开启";}
+  function save(){try{localStorage.setItem("ipq-qx.mods",JSON.stringify(M.filter(function(m){return m[2]}).map(function(m){return m[0]})));}catch(e){}}
+  function toggle(v){b.disabled=v||!rid;x.disabled=v;k.disabled=v;o.querySelectorAll("input").forEach(function(e){e.disabled=v});b.textContent=v?"正在检测…":"开始检测";}
+  function run(){
+    if(busy||!rid)return;
+    var sel=M.filter(function(m){return m[2];});
+    if(!sel.length){p.textContent="请至少开启一个项目";return;}
+    busy=true;toggle(true);r.innerHTML="";
+    sel.forEach(function(m){card(m[0],m[1]);});
+    p.textContent="检测中：约 "+sel.length+" 个模块并发执行，最长 45 秒";
+    var t0=Date.now();
+    fetch(API+"?run="+encodeURIComponent(rid)+"&mask="+(k.checked?"1":"0")+"&mods="+sel.map(function(m){return m[0]}).join(","),{cache:"no-store"})
+    .then(function(res){return res.json();})
+    .then(function(data){
+      if(!data||!data.ok)throw new Error((data&&(data.error||data.message))||"接口返回异常");
+      var done=0;
+      sel.forEach(function(m){
+        var mod=data.modules&&data.modules[m[0]];
+        if(!mod){fail(m[0],"未返回结果");return;}
+        done++;
+        if(mod.ok){ok(m[0],data.elapsedMs,mod.html);}else{fail(m[0],"检测失败",mod.html);}
+      });
+      p.textContent=done+"/"+sel.length+" 完成"+(data.note?"（"+data.note+"）":"");
+      document.getElementById("elapsed").textContent=((Date.now()-t0)/1000).toFixed(1)+" 秒";
+    })
+    .catch(function(e){
+      sel.forEach(function(m){fail(m[0],e&&e.message||"请求失败");});
+      p.textContent="失败：QX 的 http-request 是否指向本脚本？错误："+(e&&e.message||"");
+    })
+    .then(function(){busy=false;toggle(false);b.textContent="重新检测";});
+  }
+  function card(id,title){
+    var d=document.createElement("details"); d.className="result"; d.dataset.id=id; d.dataset.state="running";
+    d.innerHTML='<summary><span class="name"><span class="dot"></span>'+esc(title)+'</span><span class="status">检测中…</span></summary><div class="content"><span class="muted">排队中</span></div>';
+    r.appendChild(d);
+  }
+  function ok(id,ms,html){
+    var d=r.querySelector('[data-id="'+id+'"]'); if(!d)return;
+    d.dataset.state="success"; d.querySelector(".status").textContent=ms?(Math.round(ms/100)/10+" 秒"):"完成";
+    d.querySelector(".content").innerHTML=html||""; d.open=true;
+  }
+  function fail(id,msg,html){
+    var d=r.querySelector('[data-id="'+id+'"]'); if(!d)return;
+    d.dataset.state="error"; d.querySelector(".status").textContent="失败";
+    d.querySelector(".content").innerHTML=html||('<div class="error">'+esc(msg||"失败")+'</div>'); d.open=true;
+  }
+  function esc(v){return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+})();
+</script>
+</body>
+</html>
