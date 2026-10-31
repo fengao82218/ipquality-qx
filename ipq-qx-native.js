@@ -9,7 +9,7 @@
  *  - event-interaction <脚本>             : 节点页启动检测，出摘要弹窗
  *  - http-request <脚本>/report?d=<密文>  : 全文报告页（自行解码渲染，不依赖外部页面）
  */
-const QX_BUILD = "2026-11-02.qx2-native";
+const QX_BUILD = "2026-11-02.qx3-native";
 const SRC_URL = "https://gcore.jsdelivr.net/gh/MaYIHEI/paperclip@main/loon/ipquality/ipquality.js";
 const HARD_BUDGET_MS = 50000;
 const SUMMARY_MAX_LINES = 12;
@@ -116,7 +116,7 @@ function buildSummary(result, nodeName, startedAt) {
     const snapshot = { node: nodeName, html: html, at: Date.now(), build: QX_BUILD };
     const key = reportKey(nodeName);
     try { $prefs.setValueForKey(JSON.stringify(snapshot), key); } catch (e) {}
-    const openUrl = baseScriptUrl() + "/report?node=" + encodeURIComponent(nodeName) + "&d=" + encodeURIComponent(shortKey(nodeName));
+    const openUrl = reportBase() + "/report?node=" + encodeURIComponent(nodeName) + "&d=" + encodeURIComponent(shortKey(nodeName));
 
     const message = lines.join("\n")
         + "\n\n完整报告（地理/风险因素/媒体全项）：\n" + openUrl;
@@ -237,6 +237,12 @@ function shortKey(node) {
     let h = 0;
     for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) % 1000000007;
     return h.toString(36);
+}
+
+// 全文页地址：优先 URL 里带的 {script}（QX 配置里写 %7Bscript%7D），否则用本脚本的公开地址
+function reportBase() {
+    if (/{script}/.test(reqUrl)) return reqUrl.split("?")[0];
+    return "https://cdn.jsdelivr.net/gh/fengao82218/ipquality-qx@main/ipq-qx-native.js";
 }
 
 // QX 交互脚本拿不到自身 URL 时，用配置里的公开地址兜底
