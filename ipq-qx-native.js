@@ -9,7 +9,7 @@
  *  - event-interaction <脚本>             : 节点页启动检测，出摘要弹窗
  *  - http-request <脚本>/report?d=<密文>  : 全文报告页（自行解码渲染，不依赖外部页面）
  */
-const QX_BUILD = "2026-11-02.qx6-native";
+const QX_BUILD = "2026-11-02.qx7-native";
 const reqUrl = String(($request && $request.url) || "");
 const SRC_URL = "https://gcore.jsdelivr.net/gh/MaYIHEI/paperclip@main/loon/ipquality/ipquality.js";
 const HARD_BUDGET_MS = 45000;
