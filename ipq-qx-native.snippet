@@ -1,4 +1,10 @@
-# 节点 IP 质量检测 · QX 原生版（MaYIHEI/paperclip loon/ipquality 移植）
-# 点节点直接出纯文本报告，不需要 MITM / 重写
+# 节点 IP 质量检测 · QX 原生版 v2（MaYIHEI/paperclip loon/ipquality 移植）
+# 弹窗只给 10 行摘要，全文报告走弹窗里的 /report 链接（Safari）
 [task_local]
 event-interaction https://cdn.jsdelivr.net/gh/fengao82218/ipquality-qx@main/ipq-qx-native.js, tag=节点 IP 质量检测, img-url=shield.lefthalf.filled.system, timeout=50, enabled=true
+
+[rewrite_local]
+^https://cdn.jsdelivr.net/gh/fengao82218/ipquality-qx@main/ipq-qx-native\.js/report(\?.*)?$ url script-request-header https://cdn.jsdelivr.net/gh/fengao82218/ipquality-qx@main/ipq-qx-native.js
+
+[mitm]
+hostname = cdn.jsdelivr.net
