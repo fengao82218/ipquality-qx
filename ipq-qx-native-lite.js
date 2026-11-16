@@ -9,7 +9,7 @@
  *  - event-interaction <脚本>             : 节点页启动检测，出摘要弹窗
  *  - http-request <脚本>/report?d=<密文>  : 全文报告页（自行解码渲染，不依赖外部页面）
  */
-const QX_BUILD = "2026-11-17.qx10-policy-fix";
+const QX_BUILD = "2026-11-17.qx10-risk-dots";
 const reqUrl = String((typeof $request !== "undefined" && $request && $request.url) || "");
 const SRC_URL = "https://gcore.jsdelivr.net/gh/MaYIHEI/paperclip@main/loon/ipquality/ipquality.js";
 const HARD_BUDGET_MS = 45000;
@@ -130,7 +130,11 @@ function buildSummary(result, nodeName, startedAt) {
                 else source=x;
             });
         } else {
-            useful.forEach(x=>group.push(short(x.replace(/^●\s*/,"").replace(/（补充）/g,"").replace(/\s+([0-9]+(?:\.[0-9]+)?)\s*·/,"：$1 ·"),30)));
+            useful.forEach(x=>{
+                let line=x.replace(/^●\s*/,"").replace(/（补充）/g,"").replace(/\s+([0-9]+(?:\.[0-9]+)?)\s*·/,"：$1 ·");
+                if(/风险评分/.test(name)) line=markRiskLevel(line);
+                group.push(short(line,30));
+            });
         }
         if(group.length)out.push("","▌"+name,...group);
     });
@@ -144,6 +148,15 @@ function buildSummary(result, nodeName, startedAt) {
     }
     body.push("",short(status.replace(/^状态\s*/,""),30)+ (status?" · ":"")+((Date.now()-startedAt)/1000).toFixed(1)+"s");
     return {title:"IP 质量 · 排版10",message:body.join("\n"),icon:"shield.lefthalf.filled"};
+}
+
+// Match complete labels longest-first; retain upstream grades and score thresholds.
+function markRiskLevel(line) {
+    return String(line).replace(/极高风险|较高风险|高风险|中风险|极低风险|低风险|建议封禁|存在风险|可疑/g, label=>{
+        const dot=/^(极高风险|高风险|建议封禁|存在风险)$/.test(label)?"🔴":
+            /^(中风险|较高风险|可疑)$/.test(label)?"🟠":"🟢";
+        return dot+" "+label;
+    });
 }
 
 /* ---------------- 全文报告页 ---------------- */
